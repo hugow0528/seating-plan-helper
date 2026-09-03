@@ -5,7 +5,7 @@ function setupSeatingSystem() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   
   // -------------------------------------------------------------
-  // 1. 設定 Student_List (新增 Column E 作為有名單嘅選單)
+  // 1. 設定 Student_List
   // -------------------------------------------------------------
   var listSheet = ss.getSheetByName("Student_List");
   if (!listSheet) {
@@ -20,14 +20,10 @@ function setupSeatingSystem() {
   ];
   
   listSheet.getRange(1, 1, studentData.length, 5).setValues(studentData);
-  
-  // 設定 Column E 
-  for (var i = 2; i <= studentData.length; i++) {
-    listSheet.getRange(i, 5).setFormula(`=B${i} & " - " & D${i} & " " & C${i}`);
-  }
-  
   listSheet.getRange("A1:E1").setFontWeight("bold").setBackground("#d9e1f2");
-  listSheet.autoResizeColumns(1, 5);
+  
+  // 建立並更新下拉選單數據範圍
+  refreshStudentListAndDropdowns();
 
   // -------------------------------------------------------------
   // 2. 設定 Seating_Chart (GUI 座位表)
@@ -42,12 +38,6 @@ function setupSeatingSystem() {
   
   chartSheet.setHiddenGridlines(false);
   
-  // validation 指向 Student_List!E2:E36（帶名單選項），並允許輸入轉換後的數字
-  var rule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(listSheet.getRange("E2:E36"), true)
-    .setAllowInvalid(true)
-    .build();
-
   var seatCols = [1, 2, 4, 5, 7, 8, 10];
   var defaultSeatNo = 1;
   
@@ -57,7 +47,7 @@ function setupSeatingSystem() {
     for (var c = 0; c < seatCols.length; c++) {
       var col = seatCols[c];
       
-      // J 欄第 3 排開始係 Locker
+      // Locker
       if (col === 10 && r >= 2) {
         var lockerRange = chartSheet.getRange(startRow, col, 3, 1);
         lockerRange.merge()
@@ -73,8 +63,7 @@ function setupSeatingSystem() {
       
       // 桌子頂層：班號選單
       var cellNo = chartSheet.getRange(startRow, col);
-      cellNo.setDataValidation(rule)
-        .setValue(defaultSeatNo <= 28 ? defaultSeatNo : "")
+      cellNo.setValue(defaultSeatNo <= 28 ? defaultSeatNo : "")
         .setFontSize(11)
         .setFontWeight("bold")
         .setHorizontalAlignment("center")
@@ -96,7 +85,7 @@ function setupSeatingSystem() {
         .setHorizontalAlignment("center")
         .setVerticalAlignment("middle");
         
-      // 單張桌子黑框
+      // 黑框
       chartSheet.getRange(startRow, col, 3, 1)
         .setBorder(true, true, true, true, true, true, "#000000", SpreadsheetApp.BorderStyle.SOLID);
         
@@ -111,9 +100,7 @@ function setupSeatingSystem() {
   chartSheet.setRowHeight(16, 12);
   chartSheet.setRowHeight(20, 16);
 
-  // -------------------------------------------------------------
-  // 3. 底部區域 (Monitor, Teacher's Desk, Form Teacher, Locker)
-  // -------------------------------------------------------------
+  // 底部區域
   var bRow = 21;
   chartSheet.getRange(bRow, 1).setValue("Monitor:").setFontWeight("bold").setFontSize(10);
   chartSheet.getRange(bRow + 1, 1).setValue("Monitress:").setFontWeight("bold").setFontSize(10);
@@ -148,12 +135,54 @@ function setupSeatingSystem() {
     chartSheet.setColumnWidth(parseInt(colIdx), colWidths[colIdx]);
   }
 
+  // 重新套用 Data Validation 下拉選單
+  refreshStudentListAndDropdowns();
   onOpen();
-  SpreadsheetApp.getUi().alert("✅ 座位表已升級！選單現已顯示「學號 + 姓名」，選擇後會自動顯示為純學號！");
 }
 
 /**
- * 2. 自動監聽事件 (選取後自動切換為純學號)
+ * 2. 【核心】老師修改名單後，按下會自動更新選單及資料
+ */
+function refreshStudentListAndDropdowns() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var listSheet = ss.getSheetByName("Student_List");
+  var chartSheet = ss.getSheetByName("Seating_Chart");
+  
+  if (!listSheet || !chartSheet) return;
+  
+  var lastRow = listSheet.getLastRow();
+  if (lastRow < 2) lastRow = 2;
+  
+  // 1. 自動更新 Student_List 的 Column E 公式 (學號 - 中文名 英文名)
+  var formulas = [];
+  for (var i = 2; i <= lastRow; i++) {
+    formulas.push([`=IF(B${i}="","", B${i} & " - " & D${i} & " " & C${i})`]);
+  }
+  listSheet.getRange(2, 5, lastRow - 1, 1).setFormulas(formulas);
+  listSheet.autoResizeColumns(1, 5);
+  
+  // 2. 更新 Seating_Chart 上的選單 Data Validation 範圍
+  var rule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(listSheet.getRange(`E2:E${lastRow}`), true)
+    .setAllowInvalid(true)
+    .build();
+    
+  var seatCols = [1, 2, 4, 5, 7, 8, 10];
+  for (var r = 0; r < 5; r++) {
+    var startRow = 1 + (r * 4);
+    for (var c = 0; c < seatCols.length; c++) {
+      var col = seatCols[c];
+      if (col === 10 && r >= 2) continue; // 跳過 Locker
+      
+      chartSheet.getRange(startRow, col).setDataValidation(rule);
+    }
+  }
+  
+  SpreadsheetApp.getUi().alert("🔄 已成功同步名單！座位表選單與學生資料已全部更新。");
+}
+
+/**
+ * 3. 選取完整選項後，自動截取並顯示純學號
  */
 function onEdit(e) {
   if (!e) return;
@@ -165,7 +194,6 @@ function onEdit(e) {
   var val = e.value;
   if (!val) return;
   
-  // 只要字串包含 " - "（如 "27 - 黃子謙 WONG TSZ HIM HUGO"），就自動切換回前面的數字 "27"
   if (typeof val === 'string' && val.indexOf(" - ") !== -1) {
     var parts = val.split(" - ");
     var num = parseInt(parts[0].trim(), 10);
@@ -176,14 +204,15 @@ function onEdit(e) {
 }
 
 /**
- * 頂部工具列選單
+ * 4. 頂部選單
  */
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('座位表系統 🪑')
-    .addItem('1. 重新建構 1:1 座位表 (含名字下拉選單)', 'setupSeatingSystem')
-    .addItem('2. 一鍵順序填入 1-28 號', 'autoFillSeats')
-    .addItem('3. 清空所有座位', 'clearSeats')
+    .addItem('1. 重新建構 1:1 座位表', 'setupSeatingSystem')
+    .addItem('2. 🔄 刷新名單與下拉選單', 'refreshStudentListAndDropdowns')
+    .addItem('3. 一鍵順序填入 1-28 號', 'autoFillSeats')
+    .addItem('4. 清空所有座位', 'clearSeats')
     .addToUi();
 }
 
@@ -200,7 +229,6 @@ function autoFillSeats() {
     for (var c = 0; c < seatCols.length; c++) {
       var col = seatCols[c];
       if (col === 10 && r >= 2) continue;
-      
       chartSheet.getRange(startRow, col).setValue(seatNo);
       seatNo++;
       if (seatNo > 28) break;
