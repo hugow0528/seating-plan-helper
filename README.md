@@ -93,7 +93,7 @@
 
 ## 📄 版權與許可證 (License & Copyright)
 
-本專案採用 **MIT License** 授權。詳細內容請參閱 [LICENSE](LICENSE) 檔案。
+本專案採用 **MIT License** 授權。
 
 ```text
 Copyright (c) 2026 Hugo Wong
